@@ -1,38 +1,31 @@
-# g01c-the-developer-acoustic
+# g01c — Who Wants to Be a Game Developer? Acoustic
 
-Companion repository for **g01c — Who Wants to Be a Game Developer? Acoustic** at
-[thecodingidiot.com](https://thecodingidiot.com).
+Add background music to the g01b graphical quiz game — the same prize
+ladder, lifelines, and SDL2 rendering, now with three WAV tiers played
+by a forked `aplay` process.
 
 ---
 
 ## Follow my journey
 
-Working through g01c alongside the implementation pages? Add the music
-module to your g01a terminal game step by step, then run the tester.
-
-Clone this repository and copy `test.sh` into your working directory:
+Clone this repo and copy `test.sh` into your working directory. Work
+through the chapter's implementation pages, then run the tester:
 
 ```bash
 git clone https://github.com/thecodingidiot-com/g01c-the-developer-acoustic.git
 cp g01c-the-developer-acoustic/test.sh ~/g01c-practice/
 cd ~/g01c-practice
-make re
 bash test.sh
 ```
-
-All tests must pass before the chapter is complete.
 
 ---
 
 ## Follow your journey
 
-Building the acoustic game independently? Here is the full project brief.
+Start from your complete g01b graphical game. Add two new files and
+wire music into the existing state machine.
 
-Start from the complete g01a terminal game (five source files: `main.c`,
-`load.c`, `display.c`, `game.c`, `game.h`, plus `Makefile` and
-`questions.txt`). Add two new files:
-
-**music.h** — declares two functions:
+**music.h** — two functions:
 
 ```c
 pid_t  start_music(const char *path);
@@ -44,19 +37,20 @@ void   stop_music(pid_t pid);
 - `start_music`: calls `fork()`. In the child, calls
   `execlp("aplay", "aplay", "-q", path, NULL)`. In the parent, returns
   the child's PID.
-- `stop_music`: sends `SIGTERM` to the PID, then calls
-  `waitpid(pid, NULL, 0)`.
+- `stop_music`: if `pid <= 0`, returns immediately. Otherwise sends
+  `SIGTERM` then calls `waitpid(pid, NULL, 0)`.
 
-**game.h** — add `#include "music.h"` after the existing system
-includes.
+**game.h** — add `# include "music.h"` after the system includes. Add
+`pid_t music_pid` to `game_t`.
 
-**game.c** — add a `pid_t music_pid` local variable in `game_loop`.
-Call `start_music("music/tier1.wav")` at game start. Switch to
-`music/tier2.wav` when `level` reaches 5, and `music/tier3.wav` when
-`level` reaches 10. Call `stop_music` on all exit paths (win, loss,
-walk-away) before returning.
+**game.c** — in `game_init`, assign `g->music_pid =
+start_music("music/tier1.wav")`. In `game_free`, call
+`stop_music(g->music_pid)`. In `next_question`, stop the current track
+and start the next when `g->level` reaches 5 (tier2) or 10 (tier3);
+stop and set `music_pid` to 0 when `g->level >= LEVELS`.
 
-**Makefile** — add `music.c` to `SRCS`.
+**Makefile** — add `music.c` to `SRCS` and
+`-D_POSIX_C_SOURCE=200112L` to `CFLAGS`.
 
 **music/** — create a directory with three royalty-free WAV files:
 
@@ -66,44 +60,76 @@ walk-away) before returning.
 | `music/tier2.wav` | 2 | 6–10 |
 | `music/tier3.wav` | 3 | 11–15 |
 
-Source royalty-free tracks from [Freesound.org](https://freesound.org).
-The tester does not verify audio content — only process lifecycle and
-tier-switching logic.
+The `solution/music/` directory contains three tracks sourced from
+Kevin MacLeod (see attribution below). Use them or source your own
+from [Freesound.org](https://freesound.org) — the tester verifies
+process lifecycle and tier logic, not audio content.
 
 ---
 
-## Building the solution
+## Building the reference solution
 
-The `solution/` Makefile expects `libtci.a`, `libtciutil.a`, `libtci.h`,
-and `libtciutil.h` in the `solution/libtci/` directory. Copy them from
-your c01 build:
+`solution/` contains the complete reference implementation. `libtci` is
+compiled in-tree.
 
 ```bash
-mkdir solution/libtci
-cp libtci.a libtciutil.a libtci.h libtciutil.h solution/libtci/
-mkdir solution/music
-# copy your three WAV files here
-cp tier1.wav tier2.wav tier3.wav solution/music/
+# Requires libsdl2-dev, libsdl2-image-dev, libsdl2-ttf-dev, aplay
 cd solution
+bash gen_assets.sh      # generates assets/bg_studio.png etc.
 make
+./game ../fixtures/questions.txt
 ```
 
 ---
 
 ## What the tester checks
 
-**Process lifecycle** — `start_music` returns a valid PID. The `aplay`
-process is alive immediately after `start_music`. `stop_music` kills the
-process. No zombie is left behind.
+The tester requires `libtci.a`, `libtciutil.a` in the working
+directory, `aplay` installed, and the `fixtures/` directory alongside.
 
-**Tier logic** — a headless build (no SDL2, no audio output) drives
-`game_loop` with scripted answers and verifies that `start_music` is
-called with `music/tier1.wav`, `music/tier2.wav`, and `music/tier3.wav`
-at the correct level boundaries, and that `stop_music` is called on game
-end.
+Three test categories run sequentially:
+
+1. **Game logic** — load\_questions, game\_init state, safe\_level
+   advancement, lifeline bitfield, evaluate\_answer transitions.
+   Headless — no SDL2 headers compiled.
+2. **Music module** — `start_music` returns a valid PID; the `aplay`
+   process is alive immediately after; `stop_music` kills it; no zombie
+   is left.
+3. **Tier transitions** — a headless build drives `game_init` and
+   fifteen `next_question` calls with a stub music module. Verifies
+   that tier1 starts on init, tier2 starts at level 5, tier3 at level
+   10, and `stop_music` is called on win and on `game_free`.
+
+---
+
+## Asset attribution
+
+### Music
+
+The three tracks in `solution/music/` are by Kevin MacLeod
+(incompetech.com), licensed under Creative Commons Attribution 4.0:
+<http://creativecommons.org/licenses/by/4.0/>
+
+| File | Track | Use |
+| --- | --- | --- |
+| `tier1.wav` | "Local Forecast" | Easy questions (levels 1–5) |
+| `tier2.wav` | "Investigations" | Mid-game (levels 6–10) |
+| `tier3.wav` | "Volatile Reaction" | Final questions (levels 11–15) |
+
+### Background images and font
+
+`solution/assets/` contains the same assets as g01b:
+
+**Px437 IBM EGA 8×14** by VileR  
+Source: [int10h.org — The Ultimate Oldschool PC Font Pack](https://int10h.org/oldschool-pc-fonts/)  
+License: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)
+
+`assets/bg_studio.png`, `assets/bg_correct.png`, and `assets/bg_wrong.png`
+are solid-colour 800×600 PNG files generated by `gen_assets.sh`.
+Original work, no third-party rights.
 
 ---
 
 ## License
 
-GPLv2. See [LICENSE](LICENSE).
+[GNU General Public License v2.0](LICENSE)

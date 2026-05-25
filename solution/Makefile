@@ -1,16 +1,17 @@
-NAME    = game
 CC      = gcc
-CFLAGS  = -Wall -Wextra -g -std=c99 -D_POSIX_C_SOURCE=200112L -I libtci
-SRCS    = main.c load.c display.c game.c music.c
+CFLAGS  = -Wall -Wextra -Werror -D_REENTRANT -D_POSIX_C_SOURCE=200112L -I libtci
+LDFLAGS = $(shell sdl2-config --libs) -lSDL2_image -lSDL2_ttf
+SRCS    = main.c load.c game.c render.c font.c music.c
 OBJS    = $(SRCS:.c=.o)
-LIBS    = libtci/libtci.a libtci/libtciutil.a
+LIBS    = libtci/libtci.a
+NAME    = game
 
 .PHONY: all clean fclean re
 
 all: $(NAME)
 
 $(NAME): $(OBJS) $(LIBS)
-	$(CC) $(CFLAGS) $(OBJS) $(LIBS) -o $(NAME)
+	$(CC) $(OBJS) $(LIBS) $(LDFLAGS) -o $(NAME)
 
 $(LIBS):
 	$(MAKE) -C libtci

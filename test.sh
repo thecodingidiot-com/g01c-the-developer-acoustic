@@ -1,11 +1,11 @@
 #!/bin/bash
 # g01c — Who Wants to Be a Game Developer? Acoustic / test.sh
 #
-# Tests the music module (process lifecycle) and game tier-switching
-# logic (headless, no SDL2, no audio output required).
+# Tests game logic (headless), music module process lifecycle, and tier
+# transitions. No SDL2, no audio output required.
 #
 # Copy this file into your working directory alongside libtci.a,
-# libtciutil.a, game.h, and all source files, then run:
+# libtciutil.a, and all source files, then run:
 #
 #   bash test.sh
 
@@ -60,16 +60,12 @@ fail() {
 
 preflight() {
     local ok=1
-    for tool in gcc make aplay python3; do
+    for tool in gcc aplay python3; do
         if ! command -v "$tool" &>/dev/null; then
             echo "error: $tool is not installed" >&2
             ok=0
         fi
     done
-    if [[ ! -f Makefile ]]; then
-        echo "error: Makefile not found — run from your working directory" >&2
-        ok=0
-    fi
     if [[ ! -f libtci.a ]]; then
         echo "error: libtci.a not found — copy it from your c01 build" >&2
         ok=0
@@ -79,36 +75,16 @@ preflight() {
         ok=0
     fi
     if [[ ! -d "$FIXTURES" ]]; then
-        echo "error: fixtures/ not found — keep the g01c-the-developer-acoustic clone alongside" >&2
+        echo "error: fixtures/ not found — keep the g01c clone alongside" >&2
         ok=0
     fi
     [[ $ok -eq 0 ]] && exit 1
 }
 
-# ── build ─────────────────────────────────────────────────────────────────────
+# ── silence WAV fixture ───────────────────────────────────────────────────────
 
-build() {
-    echo ""
-    echo "${C_BOLD}  Building${C_RESET}"
-    echo ""
-    local out
-    out=$(make re 2>&1)
-    local rc=$?
-    printf '%s\n' "$out" | sed 's/^/  /'
-    echo ""
-    if [[ $rc -eq 0 ]]; then
-        pass "make re"
-    else
-        fail "make re" ""
-        echo "  Build failed — aborting tests."
-        exit 1
-    fi
-}
-
-# ── silence fixture ───────────────────────────────────────────────────────────
-
-make_silence() {
-    python3 - <<'PY'
+prepare_silence() {
+    python3 - <<'PY' > "$SILENCE_WAV"
 import struct, sys
 sr, ch, bits, nsamp = 44100, 1, 16, 4410
 data = bytes(nsamp * ch * (bits // 8))
@@ -119,150 +95,20 @@ hdr = struct.pack('<4sI4s4sIHHIIHH4sI',
     b'data', len(data))
 sys.stdout.buffer.write(hdr + data)
 PY
-}
-
-prepare_silence() {
-    make_silence > "$SILENCE_WAV"
     if [[ ! -s "$SILENCE_WAV" ]]; then
         echo "error: could not generate silence WAV fixture" >&2
         exit 1
     fi
 }
 
-# ── music module tests ────────────────────────────────────────────────────────
+# ── shared setup: headless game.h and music stub ──────────────────────────────
 
-run_music_tests() {
-    echo ""
-    echo "${C_BOLD}  Music module — process lifecycle${C_RESET}"
-    echo ""
-
-    cat > /tmp/g01c_music_test.c <<'C'
-#include <stdio.h>
-#include <signal.h>
-#include <sys/wait.h>
-#include <errno.h>
-#include "music.h"
-
-extern const char *WAV_PATH;
-const char *WAV_PATH;
-
-int main(int argc, char **argv)
-{
-    pid_t  pid;
-    int    rc;
-
-    if (argc < 2) {
-        fprintf(stderr, "usage: music_test <wav_path>\n");
-        return 1;
-    }
-    WAV_PATH = argv[1];
-
-    /* Test 1: start_music returns a positive PID */
-    pid = start_music(WAV_PATH);
-    if (pid > 0)
-        printf("PASS start_music returns valid PID\n");
-    else {
-        printf("FAIL start_music returned %d\n", (int)pid);
-        return 1;
-    }
-
-    /* brief yield so aplay has time to exec */
-    usleep(50000);
-
-    /* Test 2: aplay process is alive */
-    rc = kill(pid, 0);
-    if (rc == 0)
-        printf("PASS aplay process is alive after start\n");
-    else
-        printf("FAIL aplay process is not alive (errno %d)\n", errno);
-
-    /* Test 3: stop_music kills it */
-    stop_music(pid);
-    rc = kill(pid, 0);
-    if (rc == -1 && errno == ESRCH)
-        printf("PASS stop_music killed the process\n");
-    else
-        printf("FAIL process still exists after stop_music\n");
-
-    /* Test 4: no zombie — waitpid(WNOHANG) should return -1 (ECHILD) */
-    rc = waitpid(pid, NULL, WNOHANG);
-    if (rc == -1 && errno == ECHILD)
-        printf("PASS no zombie process left\n");
-    else
-        printf("FAIL zombie detected (waitpid returned %d, errno %d)\n",
-               rc, errno);
-
-    return 0;
-}
-C
-
-    gcc -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200112L -I. \
-        /tmp/g01c_music_test.c music.c \
-        -o /tmp/g01c_music_test 2>/tmp/g01c_music_build.log
-
-    if [[ $? -ne 0 ]]; then
-        fail "music module compilation" "$(cat /tmp/g01c_music_build.log)"
-        return
-    fi
-
-    local output
-    output=$(/tmp/g01c_music_test "$SILENCE_WAV" 2>&1)
-    while IFS= read -r line; do
-        local label="${line#PASS }"
-        local result="${line%% *}"
-        if [[ "$result" == "PASS" ]]; then
-            pass "$label"
-        else
-            fail "${line#FAIL }" ""
-        fi
-    done <<< "$output"
-}
-
-# ── tier logic tests (headless) ───────────────────────────────────────────────
-
-run_tier_tests() {
-    echo ""
-    echo "${C_BOLD}  Tier logic — headless (no audio output)${C_RESET}"
-    echo ""
-
-    # Stub music functions: start_music records the path and returns a
-    # fake PID; stop_music records the call. Both write to a shared log
-    # so the test binary can inspect them.
-
-    cat > /tmp/g01c_music_stub.c <<'C'
-#include <stdio.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <unistd.h>
-
-#define LOG "/tmp/g01c_tier_log.txt"
-
-static FILE *log_fp(void) { return fopen(LOG, "a"); }
-
-pid_t  start_music(const char *path)
-{
-    FILE *f = log_fp();
-    if (f) { fprintf(f, "start:%s\n", path); fclose(f); }
-    return 9999;
-}
-
-void  stop_music(pid_t pid)
-{
-    FILE *f = log_fp();
-    if (f) { fprintf(f, "stop:%d\n", (int)pid); fclose(f); }
-    (void)pid;
-}
-C
-
-    # Headless game.h — replaces music.h includes with stub
-    cat > /tmp/g01c_game_h.h <<'C'
-#ifndef G01C_GAME_H
-# define G01C_GAME_H
+write_headless_game_h() {
+    cat > /tmp/g01c_game_h.h <<'GAME_H'
+#ifndef G01C_GAME_H_HEADLESS
+# define G01C_GAME_H_HEADLESS
 
 # include "libtci.h"
-# include "libtciutil.h"
 # include <sys/types.h>
 # include <fcntl.h>
 # include <unistd.h>
@@ -270,50 +116,337 @@ C
 # include <time.h>
 
 # define LEVELS 15
+# define WIN_W  800
+# define WIN_H  600
 
-typedef struct {
+typedef struct s_question {
     char    *text;
     char    *opts[4];
     int      answer;
     char    *hint;
 } question_t;
 
+typedef enum e_state {
+    STATE_TITLE,
+    STATE_QUESTION,
+    STATE_CONFIRM,
+    STATE_CORRECT,
+    STATE_WRONG,
+    STATE_WIN,
+    STATE_GAMEOVER
+} game_state_t;
+
+typedef struct s_game {
+    void        *win;
+    void        *ren;
+    void        *bg_studio;
+    void        *bg_correct;
+    void        *bg_wrong;
+    void        *font;
+    game_state_t state;
+    question_t **questions;
+    int          count;
+    int          level;
+    int          safe_level;
+    int          lifelines;
+    int          phone_active;
+    int          hidden[4];
+    int          audience[4];
+    char         pending;
+    pid_t        music_pid;
+} game_t;
+
+extern const char  *PRIZES[LEVELS];
+extern const int    SAFE[LEVELS];
+
 question_t  **load_questions(const char *path, int *count);
 void          free_questions(question_t **questions, int count);
-void          display_ladder(int level, int safe_level);
-void          display_question(question_t *q, int hidden[4]);
-void          display_audience(question_t *q);
-void          display_win(void);
-void          display_loss(int safe_level);
-void          display_walkaway(int level);
-
-extern const char  *PRIZES[];
-extern const int    SAFE[];
+void          game_init(game_t *g, question_t **questions, int count);
+void          game_free(game_t *g);
+void          evaluate_answer(game_t *g);
+void          handle_lifeline(game_t *g, int lifeline);
+void          next_question(game_t *g);
 
 pid_t  start_music(const char *path);
 void   stop_music(pid_t pid);
 
-void   game_loop(question_t **questions, int count);
-
 #endif
-C
+GAME_H
+}
 
-    sed 's|#include "game.h"|#include "/tmp/g01c_game_h.h"|g' game.c  > /tmp/g01c_game.c
-    sed 's|#include "game.h"|#include "/tmp/g01c_game_h.h"|g' load.c  > /tmp/g01c_load.c
-    sed 's|#include "game.h"|#include "/tmp/g01c_game_h.h"|g' display.c > /tmp/g01c_display.c
+write_music_stub() {
+    cat > /tmp/g01c_music_stub.c <<'STUB_C'
+#include <stdio.h>
+#include <sys/types.h>
 
-    cat > /tmp/g01c_tier_test.c <<'C'
+#define STUB_LOG "/tmp/g01c_tier_log.txt"
+
+pid_t  start_music(const char *path)
+{
+    FILE *f = fopen(STUB_LOG, "a");
+    if (f) { fprintf(f, "start:%s\n", path); fclose(f); }
+    return (9999);
+}
+
+void  stop_music(pid_t pid)
+{
+    FILE *f = fopen(STUB_LOG, "a");
+    if (f) { fprintf(f, "stop:%d\n", (int)pid); fclose(f); }
+}
+STUB_C
+}
+
+# ── logic tests (headless — no SDL2, no audio output) ─────────────────────────
+
+run_logic_tests() {
+    echo ""
+    echo "${C_BOLD}  Game logic — headless (no SDL2, no audio)${C_RESET}"
+    echo ""
+
+    write_headless_game_h
+    write_music_stub
+
+    sed 's|#include "game.h"|#include "/tmp/g01c_game_h.h"|g' game.c > /tmp/g01c_game.c
+    sed 's|#include "game.h"|#include "/tmp/g01c_game_h.h"|g' load.c > /tmp/g01c_load.c
+
+    cat > /tmp/g01c_logic_test.c <<'TEST_C'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "/tmp/g01c_game_h.h"
+
+int main(void)
+{
+    question_t **qs;
+    int          count;
+    game_t       g;
+    int          prev;
+
+    /* ── Test 1: question loading ── */
+    qs = load_questions("fixtures/questions.txt", &count);
+    if (count >= 15)
+        printf("PASS load_questions: %d questions loaded\n", count);
+    else
+        printf("FAIL load_questions: got %d, want >= 15\n", count);
+    if (qs && qs[0] && qs[0]->text && qs[0]->text[0] != '\0')
+        printf("PASS load_questions: first question text is non-empty\n");
+    else
+        printf("FAIL load_questions: first question text is empty\n");
+
+    /* ── Test 2: game_init ── */
+    game_init(&g, qs, count);
+    if (g.state == STATE_TITLE && g.level == 0 && g.safe_level == -1 && g.lifelines == 7)
+        printf("PASS game_init: state TITLE, level 0, safe_level -1, lifelines 7\n");
+    else
+        printf("FAIL game_init: unexpected initial state\n");
+
+    /* ── Test 3: safe-level advancement ── */
+    g.level = 3;
+    next_question(&g);
+    if (g.safe_level == 4)
+        printf("PASS safe_level: set to 4 after reaching level 5\n");
+    else
+        printf("FAIL safe_level: got %d, want 4\n", g.safe_level);
+    if (g.state == STATE_QUESTION)
+        printf("PASS state: STATE_QUESTION at safe level\n");
+    else
+        printf("FAIL state: got %d, want STATE_QUESTION (%d)\n", g.state, (int)STATE_QUESTION);
+    g.level = 8;
+    next_question(&g);
+    if (g.safe_level == 9)
+        printf("PASS safe_level: set to 9 after reaching level 10\n");
+    else
+        printf("FAIL safe_level: got %d, want 9\n", g.safe_level);
+
+    /* ── Test 4: lifeline bitfield ── */
+    game_init(&g, qs, count);
+    if ((g.lifelines & 1) && (g.lifelines & 2) && (g.lifelines & 4))
+        printf("PASS lifelines: all three set at start\n");
+    else
+        printf("FAIL lifelines: not all set at start (got %d)\n", g.lifelines);
+    handle_lifeline(&g, 1);
+    if (!(g.lifelines & 1))
+        printf("PASS 50:50 lifeline: bit 0 cleared\n");
+    else
+        printf("FAIL 50:50 lifeline: bit 0 not cleared\n");
+    prev = g.lifelines;
+    handle_lifeline(&g, 1);
+    if (g.lifelines == prev)
+        printf("PASS 50:50 lifeline: not re-usable\n");
+    else
+        printf("FAIL 50:50 lifeline: changed on second use\n");
+    handle_lifeline(&g, 2);
+    if (!(g.lifelines & 2))
+        printf("PASS phone lifeline: bit 1 cleared\n");
+    else
+        printf("FAIL phone lifeline: bit 1 not cleared\n");
+    handle_lifeline(&g, 3);
+    if (!(g.lifelines & 4))
+        printf("PASS audience lifeline: bit 2 cleared\n");
+    else
+        printf("FAIL audience lifeline: bit 2 not cleared\n");
+
+    /* ── Test 5: state transitions ── */
+    game_init(&g, qs, count);
+    g.state = STATE_QUESTION;
+    g.pending = (char)('A' + qs[0]->answer);
+    evaluate_answer(&g);
+    if (g.state == STATE_CORRECT)
+        printf("PASS evaluate_answer: correct answer -> STATE_CORRECT\n");
+    else
+        printf("FAIL evaluate_answer: got %d, want STATE_CORRECT (%d)\n", g.state, (int)STATE_CORRECT);
+    game_init(&g, qs, count);
+    g.state = STATE_QUESTION;
+    g.pending = (char)('A' + ((qs[0]->answer + 1) % 4));
+    evaluate_answer(&g);
+    if (g.state == STATE_WRONG)
+        printf("PASS evaluate_answer: wrong answer -> STATE_WRONG\n");
+    else
+        printf("FAIL evaluate_answer: got %d, want STATE_WRONG (%d)\n", g.state, (int)STATE_WRONG);
+
+    game_free(&g);
+    free_questions(qs, count);
+    return 0;
+}
+TEST_C
+
+    gcc -Wall -Wextra -I. -I libtci \
+        /tmp/g01c_logic_test.c \
+        /tmp/g01c_game.c \
+        /tmp/g01c_load.c \
+        /tmp/g01c_music_stub.c \
+        libtci.a libtciutil.a \
+        -o /tmp/g01c_logic_tester 2>/tmp/g01c_logic_build.log
+
+    if [[ $? -ne 0 ]]; then
+        fail "logic test compilation" "$(cat /tmp/g01c_logic_build.log)"
+        return
+    fi
+
+    ln -sf "$FIXTURES" fixtures 2>/dev/null || true
+
+    local output
+    output=$(/tmp/g01c_logic_tester 2>&1)
+    while IFS= read -r line; do
+        local result="${line%% *}"
+        if [[ "$result" == "PASS" ]]; then
+            pass "${line#PASS }"
+        else
+            fail "${line#FAIL }" ""
+        fi
+    done <<< "$output"
+}
+
+# ── music module tests (real process lifecycle) ────────────────────────────────
+
+run_music_tests() {
+    echo ""
+    echo "${C_BOLD}  Music module — process lifecycle${C_RESET}"
+    echo ""
+
+    cat > /tmp/g01c_music_test.c <<'MUSIC_C'
+#include <stdio.h>
+#include <errno.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+#include "music.h"
+
+int main(int argc, char **argv)
+{
+    pid_t           pid;
+    int             rc;
+    struct timespec ts;
+
+    if (argc < 2) {
+        fprintf(stderr, "usage: music_test <wav_path>\n");
+        return 1;
+    }
+
+    pid = start_music(argv[1]);
+    if (pid > 0)
+        printf("PASS start_music returns valid PID\n");
+    else {
+        printf("FAIL start_music returned %d\n", (int)pid);
+        return 1;
+    }
+
+    ts.tv_sec = 0;
+    ts.tv_nsec = 50000000;
+    nanosleep(&ts, NULL);
+
+    rc = kill(pid, 0);
+    if (rc == 0)
+        printf("PASS aplay process is alive after start\n");
+    else
+        printf("FAIL aplay process is not alive (errno %d)\n", errno);
+
+    stop_music(pid);
+    rc = kill(pid, 0);
+    if (rc == -1 && errno == ESRCH)
+        printf("PASS stop_music killed the process\n");
+    else
+        printf("FAIL process still exists after stop_music\n");
+
+    rc = waitpid(pid, NULL, WNOHANG);
+    if (rc == -1 && errno == ECHILD)
+        printf("PASS no zombie process left\n");
+    else
+        printf("FAIL zombie detected (waitpid returned %d, errno %d)\n", rc, errno);
+
+    return 0;
+}
+MUSIC_C
+
+    gcc -Wall -Wextra -D_POSIX_C_SOURCE=200112L -I. \
+        /tmp/g01c_music_test.c music.c \
+        -o /tmp/g01c_music_test_bin 2>/tmp/g01c_music_build.log
+
+    if [[ $? -ne 0 ]]; then
+        fail "music module compilation" "$(cat /tmp/g01c_music_build.log)"
+        return
+    fi
+
+    local output
+    output=$(/tmp/g01c_music_test_bin "$SILENCE_WAV" 2>&1)
+    while IFS= read -r line; do
+        local result="${line%% *}"
+        if [[ "$result" == "PASS" ]]; then
+            pass "${line#PASS }"
+        else
+            fail "${line#FAIL }" ""
+        fi
+    done <<< "$output"
+}
+
+# ── tier transition tests (headless — log inspection) ─────────────────────────
+
+run_tier_tests() {
+    echo ""
+    echo "${C_BOLD}  Tier transitions — headless${C_RESET}"
+    echo ""
+
+    write_headless_game_h
+    write_music_stub
+
+    sed 's|#include "game.h"|#include "/tmp/g01c_game_h.h"|g' game.c > /tmp/g01c_game.c
+    sed 's|#include "game.h"|#include "/tmp/g01c_game_h.h"|g' load.c > /tmp/g01c_load.c
+
+    cat > /tmp/g01c_tier_test.c <<'TIER_C'
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include "/tmp/g01c_game_h.h"
 
-#define LOG "/tmp/g01c_tier_log.txt"
+#define STUB_LOG "/tmp/g01c_tier_log.txt"
 
 static int log_contains(const char *substr)
 {
-    FILE *f = fopen(LOG, "r");
+    FILE *f;
     char  line[256];
+
+    f = fopen(STUB_LOG, "r");
     if (!f) return 0;
     while (fgets(line, sizeof(line), f)) {
         if (strstr(line, substr)) { fclose(f); return 1; }
@@ -322,87 +455,91 @@ static int log_contains(const char *substr)
     return 0;
 }
 
-static void log_clear(void) { fopen(LOG, "w"); }
+static void log_clear(void)
+{
+    FILE *f = fopen(STUB_LOG, "w");
+    if (f) fclose(f);
+}
 
 int main(void)
 {
     question_t **qs;
     int          count;
+    game_t       g;
+    int          i;
 
     qs = load_questions("fixtures/questions.txt", &count);
     if (!qs || count < 15) {
-        printf("FAIL could not load questions\n");
+        printf("FAIL could not load questions (got %d)\n", count);
         return 1;
     }
 
-    /* Drive a full 15-question win with all-A answers (answer index 0) */
+    /* ── tier1 starts on game_init ── */
     log_clear();
-
-    /* Redirect stdout to /dev/null for game output */
-    int devnull = open("/dev/null", 1);
-    int saved   = dup(1);
-    dup2(devnull, 1);
-
-    /* Feed: 15 'A\n' answers via a pipe */
-    int pfd[2];
-    pipe(pfd);
-    for (int i = 0; i < 15; i++) write(pfd[1], "A\n", 2);
-    close(pfd[1]);
-    int saved_stdin = dup(0);
-    dup2(pfd[0], 0);
-    close(pfd[0]);
-
-    game_loop(qs, count);
-
-    dup2(saved, 1);
-    close(saved);
-    dup2(saved_stdin, 0);
-    close(saved_stdin);
-    close(devnull);
-
-    /* Inspect log */
-    int ok = 1;
-
+    game_init(&g, qs, count);
     if (log_contains("start:music/tier1.wav"))
-        printf("PASS tier1 music started at game start\n");
-    else { printf("FAIL tier1 not started\n"); ok = 0; }
+        printf("PASS tier1 music started at game_init\n");
+    else
+        printf("FAIL tier1 music not started at game_init\n");
 
+    /* ── tier2 starts at level 5 ── */
+    for (i = 0; i < 5; i++)
+        next_question(&g);
     if (log_contains("start:music/tier2.wav"))
-        printf("PASS tier2 music started after Q5\n");
-    else { printf("FAIL tier2 not started\n"); ok = 0; }
+        printf("PASS tier2 music started when level reaches 5\n");
+    else
+        printf("FAIL tier2 music not started at level 5\n");
 
+    /* ── tier3 starts at level 10 ── */
+    for (i = 0; i < 5; i++)
+        next_question(&g);
     if (log_contains("start:music/tier3.wav"))
-        printf("PASS tier3 music started after Q10\n");
-    else { printf("FAIL tier3 not started\n"); ok = 0; }
+        printf("PASS tier3 music started when level reaches 10\n");
+    else
+        printf("FAIL tier3 music not started at level 10\n");
 
+    /* ── stop_music called on win (final 5 questions) ── */
+    log_clear();
+    for (i = 0; i < 5; i++)
+        next_question(&g);
+    if (g.state == STATE_WIN && log_contains("stop:9999"))
+        printf("PASS stop_music called on win\n");
+    else
+        printf("FAIL stop_music not called on win (state %d)\n", g.state);
+
+    game_free(&g);
+
+    /* ── stop_music called on game_free (game over path) ── */
+    log_clear();
+    game_init(&g, qs, count);
+    game_free(&g);
     if (log_contains("stop:9999"))
-        printf("PASS stop_music called on game end\n");
-    else { printf("FAIL stop_music not called on game end\n"); ok = 0; }
+        printf("PASS stop_music called on game_free\n");
+    else
+        printf("FAIL stop_music not called on game_free\n");
 
     free_questions(qs, count);
-    return (ok ? 0 : 1);
+    return 0;
 }
-C
+TIER_C
 
-    gcc -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200112L -I. \
+    gcc -Wall -Wextra -I. -I libtci \
         /tmp/g01c_tier_test.c \
         /tmp/g01c_game.c \
         /tmp/g01c_load.c \
-        /tmp/g01c_display.c \
         /tmp/g01c_music_stub.c \
         libtci.a libtciutil.a \
-        -o /tmp/g01c_tier_test 2>/tmp/g01c_tier_build.log
+        -o /tmp/g01c_tier_tester 2>/tmp/g01c_tier_build.log
 
     if [[ $? -ne 0 ]]; then
         fail "tier test compilation" "$(cat /tmp/g01c_tier_build.log)"
         return
     fi
 
-    # Supply the fixtures path via argv through working directory symlink
     ln -sf "$FIXTURES" fixtures 2>/dev/null || true
 
     local output
-    output=$(/tmp/g01c_tier_test 2>&1)
+    output=$(/tmp/g01c_tier_tester 2>&1)
     while IFS= read -r line; do
         local result="${line%% *}"
         if [[ "$result" == "PASS" ]]; then
@@ -422,7 +559,9 @@ summary() {
     printf "  %d / %d tests passed\n" "$pass_count" "$total"
     hr
     echo ""
-    [[ $fail_count -gt 0 ]] && exit 1
+    if [[ $fail_count -gt 0 ]]; then
+        exit 1
+    fi
 }
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -430,7 +569,7 @@ summary() {
 banner
 preflight
 prepare_silence
-build
+run_logic_tests
 run_music_tests
 run_tier_tests
 summary

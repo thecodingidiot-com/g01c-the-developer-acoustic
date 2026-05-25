@@ -1,110 +1,112 @@
 #include "game.h"
 
-static char read_input(void)
-{
-    char  c;
-    char  flush;
+const char  *PRIZES[LEVELS] = {
+    "£100", "£200", "£300", "£500", "£1,000",
+    "£2,000", "£4,000", "£8,000", "£16,000", "£32,000",
+    "£64,000", "£125,000", "£250,000", "£500,000", "£1,000,000"
+};
 
-    if (read(0, &c, 1) <= 0)
-        return ('\0');
-    read(0, &flush, 1);
-    return (tci_toupper(c));
+const int   SAFE[LEVELS] = {
+    0, 0, 0, 0, 1,
+    0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0
+};
+
+void    game_init(game_t *g, question_t **questions, int count)
+{
+    tci_bzero(g->hidden, sizeof(g->hidden));
+    tci_bzero(g->audience, sizeof(g->audience));
+    g->state = STATE_TITLE;
+    g->questions = questions;
+    g->count = count;
+    g->level = 0;
+    g->safe_level = -1;
+    g->lifelines = 7;
+    g->phone_active = 0;
+    g->pending = 0;
+    g->music_pid = start_music("music/tier1.wav");
 }
 
-static void handle_lifeline(question_t *q, int *flags, int hidden[4],
-                             char choice)
+void    game_free(game_t *g)
 {
-    int  i;
-    int  removed;
+    stop_music(g->music_pid);
+}
 
-    if (choice == '1' && *flags & 1) {
+void    evaluate_answer(game_t *g)
+{
+    question_t  *q;
+
+    q = g->questions[g->level];
+    if (g->pending - 'A' == q->answer)
+        g->state = STATE_CORRECT;
+    else
+        g->state = STATE_WRONG;
+}
+
+void    handle_lifeline(game_t *g, int lifeline)
+{
+    question_t  *q;
+    int          bit;
+    int          removed;
+    int          i;
+
+    q = g->questions[g->level];
+    bit = 1 << (lifeline - 1);
+    if (!(g->lifelines & bit))
+        return;
+    g->lifelines &= ~bit;
+    if (lifeline == 1) {
         removed = 0;
         for (i = 0; i < 4 && removed < 2; i++) {
-            if (i != q->answer) {
-                hidden[i] = 1;
-                removed++;
+            if (i == q->answer)
+                continue;
+            g->hidden[i] = 1;
+            removed++;
+        }
+    } else if (lifeline == 2) {
+        g->phone_active = 1;
+    } else if (lifeline == 3) {
+        int correct;
+        int spread;
+
+        correct = 55 + (rand() % 30);
+        g->audience[q->answer] = correct;
+        spread = 100 - correct;
+        for (i = 0; i < 4; i++) {
+            if (i == q->answer)
+                continue;
+            if (g->hidden[i]) {
+                g->audience[i] = 0;
+            } else {
+                int portion = spread / 3;
+                g->audience[i] = portion;
+                spread -= portion;
             }
         }
-        *flags &= ~1;
-        tci_printf("\n50:50 — two wrong answers removed.\n\n");
-    } else if (choice == '2' && *flags & 2) {
-        if (q->hint)
-            tci_printf("\nFriend says: %s\n\n", q->hint);
-        else
-            tci_printf("\nFriend says: The answer is %c.\n\n",
-                       "ABCD"[q->answer]);
-        *flags &= ~2;
-    } else if (choice == '3' && *flags & 4) {
-        display_audience(q);
-        *flags &= ~4;
-    } else {
-        tci_printf("Lifeline not available.\n");
     }
 }
 
-void    game_loop(question_t **questions, int count)
+void    next_question(game_t *g)
 {
-    int          level;
-    int          safe_level;
-    int          lifelines;
-    int          hidden[4];
-    int          i;
-    char         c;
-    question_t  *q;
-    pid_t        music_pid;
-
-    level      = 0;
-    safe_level = -1;
-    lifelines  = 7;
-    music_pid  = start_music("music/tier1.wav");
-    while (level < LEVELS && level < count) {
-        q = questions[level];
-        for (i = 0; i < 4; i++)
-            hidden[i] = 0;
-        display_ladder(level, safe_level);
-        if (SAFE[level])
-            safe_level = level;
-        tci_printf("Level %d — %s\n\n", level + 1, PRIZES[level]);
-        display_question(q, hidden);
-        tci_printf("[1] 50:50  [2] Phone  [3] Audience  "
-                   "[W] Walk away\n");
-        tci_printf("Your answer (A-D): ");
-        while (1) {
-            c = read_input();
-            if (c == 'A' || c == 'B' || c == 'C' || c == 'D')
-                break;
-            if (c == '1' || c == '2' || c == '3' || c == 'W') {
-                if (c == 'W') {
-                    stop_music(music_pid);
-                    display_walkaway(level);
-                    free_questions(questions, count);
-                    return ;
-                }
-                handle_lifeline(q, &lifelines, hidden, c);
-                display_question(q, hidden);
-                tci_printf("Your answer (A-D): ");
-            }
-        }
-        if (c - 'A' == q->answer) {
-            tci_printf("\nCorrect!\n");
-            level++;
-            if (level == 5) {
-                stop_music(music_pid);
-                music_pid = start_music("music/tier2.wav");
-            } else if (level == 10) {
-                stop_music(music_pid);
-                music_pid = start_music("music/tier3.wav");
-            }
-            if (level == LEVELS) {
-                stop_music(music_pid);
-                display_win();
-                break;
-            }
-        } else {
-            stop_music(music_pid);
-            display_loss(safe_level);
-            break;
-        }
+    g->level++;
+    if (g->level >= LEVELS) {
+        stop_music(g->music_pid);
+        g->music_pid = 0;
+        g->state = STATE_WIN;
+        return;
     }
-    free_questions(questions, count);
+    if (g->level == 5) {
+        stop_music(g->music_pid);
+        g->music_pid = start_music("music/tier2.wav");
+    } else if (g->level == 10) {
+        stop_music(g->music_pid);
+        g->music_pid = start_music("music/tier3.wav");
+    }
+    tci_bzero(g->hidden, sizeof(g->hidden));
+    tci_bzero(g->audience, sizeof(g->audience));
+    g->phone_active = 0;
+    g->pending = 0;
+    if (SAFE[g->level])
+        g->safe_level = g->level;
+    g->state = STATE_QUESTION;
 }

@@ -1,100 +1,114 @@
 #include "game.h"
 
-static void encode_pipes(char *s)
+static char *next_field(char **p)
 {
-    char *r;
-    char *w;
+    char    *start;
+    char    *dst;
 
-    r = s;
-    w = s;
-    while (*r) {
-        if (r[0] == '|' && r[1] == '|') {
-            *w++ = '\x01';  /* C0 control byte — cannot appear in valid UTF-8 text */
-            r += 2;
+    if (!*p || !**p)
+        return (NULL);
+    start = *p;
+    dst = start;
+    while (**p) {
+        if (**p == '|') {
+            if (*(*p + 1) == '|') {
+                *dst++ = '|';
+                *p += 2;
+            } else {
+                *dst = '\0';
+                (*p)++;
+                return (start);
+            }
         } else {
-            *w++ = *r++;
+            *dst++ = **p;
+            (*p)++;
         }
     }
-    *w = '\0';              /* loop exits before the null terminator is copied */
+    *dst = '\0';
+    return (start);
 }
 
-static void decode_pipes(char **fields)
+static question_t   *parse_line(char *line)
 {
-    int   i;
-    char *p;
+    question_t  *q;
+    char        *p;
+    char        *tok;
+    int          i;
 
-    for (i = 0; fields[i]; i++) {
-        for (p = fields[i]; *p; p++) {
-            if (*p == '\x01')
-                *p = '|';
-        }
+    q = tci_calloc(1, sizeof(question_t));
+    if (!q)
+        return (NULL);
+    p = line;
+    tok = next_field(&p);
+    if (!tok) { free(q); return (NULL); }
+    q->text = tci_strdup(tok);
+    for (i = 0; i < 4; i++) {
+        tok = next_field(&p);
+        if (!tok) { free(q); return (NULL); }
+        q->opts[i] = tci_strdup(tok);
     }
+    tok = next_field(&p);
+    if (!tok) { free(q); return (NULL); }
+    q->answer = tci_atoi(tok);
+    tok = next_field(&p);
+    q->hint = tok ? tci_strdup(tok) : NULL;
+    return (q);
 }
 
 question_t  **load_questions(const char *path, int *count)
 {
-    int         fd;
+    int          fd;
     char        *line;
     char        *nl;
-    char        **fields;
-    question_t  **questions;
-    question_t  *q;
-    int         capacity;
-    int         i;
+    question_t **questions;
+    int          cap;
+    int          n;
 
     fd = open(path, O_RDONLY);
     if (fd < 0) {
-        tci_printf("error: cannot open '%s'\n", path);
+        tci_printf("load_questions: cannot open %s\n", path);
         return (NULL);
     }
-    questions = NULL;
-    *count = 0;
-    capacity = 0;
+    cap = 32;
+    n = 0;
+    questions = tci_calloc(cap, sizeof(question_t *));
+    if (!questions) { close(fd); return (NULL); }
     while ((line = tci_getline(fd)) != NULL) {
         nl = tci_strchr(line, '\n');
         if (nl)
             *nl = '\0';
-        encode_pipes(line);
-        fields = tciu_split(line, '|');
-        free(line);
-        if (!fields || !fields[0] || !fields[4]) {
-            if (fields)
-                free(fields);
+        if (line[0] == '\0' || line[0] == '#') {
+            free(line);
             continue;
         }
-        decode_pipes(fields);
-        if (*count == capacity) {
-            capacity = capacity ? capacity * 2 : 16;
-            questions = realloc(questions, capacity * sizeof(question_t *));
+        if (n >= cap) {
+            question_t **tmp;
+
+            cap *= 2;
+            tmp = realloc(questions, cap * sizeof(question_t *));
+            if (!tmp) { free(line); break; }
+            questions = tmp;
         }
-        q = tci_calloc(1, sizeof(question_t));
-        q->text    = tci_strdup(fields[0]);
-        q->opts[0] = tci_strdup(fields[1]);
-        q->opts[1] = tci_strdup(fields[2]);
-        q->opts[2] = tci_strdup(fields[3]);
-        q->opts[3] = tci_strdup(fields[4]);
-        q->answer  = fields[5] ? fields[5][0] - '0' : 0;
-        q->hint    = (fields[6] && fields[6][0])
-                     ? tci_strdup(fields[6])
-                     : NULL;
-        questions[(*count)++] = q;
-        i = 0;
-        while (fields[i])
-            free(fields[i++]);
-        free(fields);
+        questions[n] = parse_line(line);
+        free(line);
+        if (questions[n])
+            n++;
     }
     close(fd);
+    *count = n;
     return (questions);
 }
 
 void    free_questions(question_t **questions, int count)
 {
-    int  i;
-    int  j;
+    int i;
+    int j;
 
     if (!questions)
         return;
     for (i = 0; i < count; i++) {
+        if (!questions[i])
+            continue;
         free(questions[i]->text);
         for (j = 0; j < 4; j++)
             free(questions[i]->opts[j]);
