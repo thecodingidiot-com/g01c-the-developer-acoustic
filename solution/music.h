@@ -4,6 +4,7 @@
 # include <sys/types.h>
 # include <sys/wait.h>
 # include <signal.h>
+# include <fcntl.h>
 # include <unistd.h>
 
 pid_t  start_music(const char *path);

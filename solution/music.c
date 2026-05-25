@@ -3,12 +3,19 @@
 pid_t  start_music(const char *path)
 {
     pid_t  pid;
+    int    devnull;
 
     pid = fork();
     if (pid == -1)
         return (-1);
     if (pid == 0)
     {
+        devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0)
+        {
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
         execlp("aplay", "aplay", "-q", path, NULL);
         _exit(1);
     }
