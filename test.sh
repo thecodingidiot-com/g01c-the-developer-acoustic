@@ -196,7 +196,7 @@ int main(int argc, char **argv)
 }
 C
 
-    gcc -Wall -Wextra -std=c99 -I. \
+    gcc -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200112L -I. \
         /tmp/g01c_music_test.c music.c \
         -o /tmp/g01c_music_test 2>/tmp/g01c_music_build.log
 
@@ -384,7 +384,7 @@ int main(void)
 }
 C
 
-    gcc -Wall -Wextra -std=c99 -I. \
+    gcc -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200112L -I. \
         /tmp/g01c_tier_test.c \
         /tmp/g01c_game.c \
         /tmp/g01c_load.c \

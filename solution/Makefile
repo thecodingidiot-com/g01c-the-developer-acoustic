@@ -1,6 +1,6 @@
 NAME    = game
 CC      = gcc
-CFLAGS  = -Wall -Wextra -g -std=c99 -I libtci
+CFLAGS  = -Wall -Wextra -g -std=c99 -D_POSIX_C_SOURCE=200112L -I libtci
 SRCS    = main.c load.c display.c game.c music.c
 OBJS    = $(SRCS:.c=.o)
 LIBS    = libtci/libtci.a libtci/libtciutil.a
