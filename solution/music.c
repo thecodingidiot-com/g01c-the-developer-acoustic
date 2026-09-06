@@ -8,11 +8,9 @@ pid_t  start_music(const char *path)
     pid = fork();
     if (pid == -1)
         return (-1);
-    if (pid == 0)
-    {
+    if (pid == 0) {
         devnull = open("/dev/null", O_WRONLY);
-        if (devnull >= 0)
-        {
+        if (devnull >= 0) {
             dup2(devnull, STDERR_FILENO);
             close(devnull);
         }
