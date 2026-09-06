@@ -1,4 +1,4 @@
-# g01c — Who Wants to Be a Game Developer? Acoustic
+# g01c — The Sound
 
 Add background music to the g01b graphical quiz game — the same prize
 ladder, lifelines, and SDL2 rendering, now with three WAV tiers played
