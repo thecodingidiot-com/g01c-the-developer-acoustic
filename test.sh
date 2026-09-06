@@ -550,6 +550,25 @@ TIER_C
     done <<< "$output"
 }
 
+# ── question set ──────────────────────────────────────────────────────────────
+
+# The set this game plays was once byte-identical to g01a's *test* fixture,
+# where every correct answer sits at option A on purpose so assertions can be
+# written by hand. Shipped as the playable set that made the game winnable by
+# pressing A fifteen times, and the shuffle in main.c does not help: it
+# reorders the questions, never the four options within one.
+check_answer_spread() {
+    local file="${FIXTURES}/questions.txt"
+    local distinct
+    distinct=$(cut -d'|' -f6 "$file" | sort -u | wc -l)
+    if [[ "$distinct" -ge 3 ]]; then
+        pass "the played question set spreads its answers ($distinct of 4 positions used)"
+    else
+        fail "the played question set spreads its answers" \
+            "at least 3 of the 4 option positions, got $distinct — a set where the answer is always in the same place is a test fixture, not a game"
+    fi
+}
+
 # ── summary ───────────────────────────────────────────────────────────────────
 
 summary() {
@@ -572,4 +591,5 @@ prepare_silence
 run_logic_tests
 run_music_tests
 run_tier_tests
+check_answer_spread
 summary
