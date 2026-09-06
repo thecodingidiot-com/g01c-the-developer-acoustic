@@ -12,8 +12,8 @@ Clone this repo and copy `test.sh` into your working directory. Work
 through the chapter's implementation pages, then run the tester:
 
 ```bash
-git clone https://github.com/thecodingidiot-com/g01c-the-developer-acoustic.git
-cp g01c-the-developer-acoustic/test.sh ~/g01c-practice/
+git clone https://github.com/thecodingidiot-com/g01c-the-sound.git
+cp g01c-the-sound/test.sh ~/g01c-practice/
 cd ~/g01c-practice
 bash test.sh
 ```
