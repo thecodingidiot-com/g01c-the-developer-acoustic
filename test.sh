@@ -1,5 +1,5 @@
 #!/bin/bash
-# g01c — Who Wants to Be a Game Developer? Acoustic / test.sh
+# g01c — The Sound / test.sh
 #
 # Tests game logic (headless), music module process lifecycle, and tier
 # transitions. No SDL2, no audio output required.
@@ -39,7 +39,7 @@ hr() { echo "──────────────────────�
 
 banner() {
     hr
-    echo "  g01c — Who Wants to Be a Game Developer? Acoustic / test.sh"
+    echo "  g01c — The Sound / test.sh"
     hr
 }
 

@@ -116,7 +116,7 @@ int main(int argc, char *argv[])
         return (1);
     }
     tci_bzero(&g, sizeof(g));
-    g.win = SDL_CreateWindow("Who Wants to Be a Game Developer?",
+    g.win = SDL_CreateWindow("The Quiz",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         WIN_W, WIN_H, 0);
     if (!g.win) {
