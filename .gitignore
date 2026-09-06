@@ -1,3 +1,6 @@
 *.o
 solution/game
 solution/libtci/*.a
+# test.sh symlinks the fixtures dir into its CWD at runtime; a committed
+# copy points at an absolute path and is broken for everyone else.
+fixtures/fixtures
